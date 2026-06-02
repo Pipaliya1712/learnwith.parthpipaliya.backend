@@ -6,6 +6,8 @@ class Settings(BaseSettings):
     # Supabase
     supabase_url: str
     supabase_service_role_key: str
+    supabase_bucket: str = "avatars"
+    supabase_bucket_projects: str = "project-images"
 
     # JWT
     jwt_secret: str

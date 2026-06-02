@@ -38,7 +38,10 @@ class ProjectCreateRequest(BaseModel):
     repo_link: str
     additional_info: Optional[str] = None
     is_visible: bool = False
-
+    features: List[FeatureItem] = []
+    improvements: List[ImprovementItem] = []
+    bugs: List[BugItem] = []
+    tag_ids: List[str] = []
 
 class ProjectUpdateRequest(BaseModel):
     name: str

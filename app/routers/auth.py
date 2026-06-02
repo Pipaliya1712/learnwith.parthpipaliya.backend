@@ -1,4 +1,6 @@
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends, UploadFile, File
+import uuid
+import os
 from passlib.context import CryptContext
 from app.models.auth import (
     SignupRequest, VerifyOTPRequest, ResendOTPRequest,
@@ -11,15 +13,27 @@ from app.config import get_settings
 from app.dependencies import create_access_token, get_current_user
 from app.services.email_service import send_otp_email
 from app.services.otp_service import generate_otp, store_otp, verify_and_consume_otp
+from app.services.captcha_service import generate_math_captcha, verify_captcha
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+# ─── CAPTCHA ─────────────────────────────────────────────────────────────────
+
+@router.get("/captcha")
+async def get_captcha():
+    question, token = generate_math_captcha()
+    return {"question": question, "captcha_token": token}
 
 
 # ─── SIGNUP ──────────────────────────────────────────────────────────────────
 
 @router.post("/signup", response_model=SuccessResponse, status_code=status.HTTP_201_CREATED)
 async def signup(body: SignupRequest):
+    if not verify_captcha(body.captcha_token, body.captcha_answer):
+        raise HTTPException(status_code=400, detail="Invalid CAPTCHA")
+        
     settings = get_settings()
     supabase = get_supabase()
     username = body.display_name.strip()
@@ -133,6 +147,9 @@ async def resend_otp(body: ResendOTPRequest):
 
 @router.post("/login", response_model=LoginResponse)
 async def login(body: LoginRequest):
+    if not verify_captcha(body.captcha_token, body.captcha_answer):
+        raise HTTPException(status_code=400, detail="Invalid CAPTCHA")
+        
     settings = get_settings()
     supabase = get_supabase()
 
@@ -265,6 +282,49 @@ async def update_profile(
 
     supabase.table("profiles").update({"display_name": username}).eq("id", current_user.id).execute()
     return SuccessResponse(message="Profile updated")
+
+
+# ─── UPLOAD AVATAR ───────────────────────────────────────────────────────────
+
+@router.post("/avatar", response_model=SuccessResponse)
+async def upload_avatar(
+    file: UploadFile = File(...),
+    current_user: UserProfile = Depends(get_current_user),
+):
+    supabase = get_supabase()
+    settings = get_settings()
+    bucket_name = settings.supabase_bucket
+    
+    if not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="File must be an image")
+        
+    file_ext = os.path.splitext(file.filename)[1]
+    file_name = f"{current_user.id}/{uuid.uuid4()}{file_ext}"
+    
+    # Upload to supabase bucket 'avatars'
+    try:
+        # Delete all existing avatars for this user
+        try:
+            files = supabase.storage.from_(bucket_name).list(current_user.id)
+            if files:
+                files_to_remove = [f"{current_user.id}/{f['name']}" for f in files if f['name']]
+                if files_to_remove:
+                    supabase.storage.from_(bucket_name).remove(files_to_remove)
+        except Exception:
+            pass # Ignore errors in deletion of old avatars
+                
+        contents = await file.read()
+        res = supabase.storage.from_(bucket_name).upload(file_name, contents, {"content-type": file.content_type})
+        
+        # Get public url
+        public_url = supabase.storage.from_(bucket_name).get_public_url(file_name)
+        
+        # Update user profile
+        supabase.table("profiles").update({"avatar_url": public_url}).eq("id", current_user.id).execute()
+        
+        return SuccessResponse(message="Avatar updated successfully")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to upload image: {str(e)}")
 
 
 # ─── UPDATE EMAIL (step 1: send OTP to new email) ────────────────────────────

@@ -19,6 +19,22 @@ def generate_slug(name: str) -> str:
     slug = re.sub(r"-+", "-", slug)
     return slug.strip("-")
 
+def ensure_unique_slug(supabase, base_slug: str, exclude_project_id: str = None) -> str:
+    slug = base_slug
+    counter = 1
+    while True:
+        query = supabase.table("projects").select("id").eq("slug", slug)
+        if exclude_project_id:
+            query = query.neq("id", exclude_project_id)
+        result = query.execute()
+        
+        if not getattr(result, 'data', []):
+            break
+        
+        slug = f"{base_slug}-{counter}"
+        counter += 1
+    return slug
+
 
 # ─── GET LANDING PROJECTS ────────────────────────────────────────────────────
 
@@ -186,7 +202,8 @@ async def create_project(
     current_user: UserProfile = Depends(require_admin),
 ):
     supabase = get_supabase()
-    slug = generate_slug(body.name)
+    base_slug = generate_slug(body.name)
+    slug = ensure_unique_slug(supabase, base_slug)
 
     result = supabase.table("projects").insert({
         "name": body.name,
@@ -197,12 +214,42 @@ async def create_project(
         "is_visible": body.is_visible,
         "slug": slug,
         "created_by": current_user.id,
-    }).select("id").single().execute()
+    }).execute()
 
-    if not result.data:
+    if not result.data or len(result.data) == 0:
         raise HTTPException(status_code=500, detail="Failed to create project")
 
-    return {"success": True, "id": result.data["id"], "slug": slug}
+    project_id = result.data[0]["id"]
+
+    # Insert features
+    if body.features:
+        supabase.table("features").insert([
+            {"project_id": project_id, "title": f.title, "description": f.description, "display_order": i}
+            for i, f in enumerate(body.features)
+        ]).execute()
+
+    # Insert improvements
+    if body.improvements:
+        supabase.table("improvements").insert([
+            {"project_id": project_id, "title": imp.title, "description": imp.description, "display_order": i}
+            for i, imp in enumerate(body.improvements)
+        ]).execute()
+
+    # Insert bugs
+    if body.bugs:
+        supabase.table("bugs").insert([
+            {"project_id": project_id, "title": b.title, "description": b.description, "severity": b.severity, "display_order": i}
+            for i, b in enumerate(body.bugs)
+        ]).execute()
+
+    # Insert tags
+    if body.tag_ids:
+        supabase.table("project_tags").insert([
+            {"project_id": project_id, "tag_id": tag_id}
+            for tag_id in body.tag_ids
+        ]).execute()
+
+    return {"success": True, "id": project_id, "slug": slug}
 
 
 # ─── UPDATE PROJECT ──────────────────────────────────────────────────────────
@@ -214,7 +261,8 @@ async def update_project(
     current_user: UserProfile = Depends(require_admin),
 ):
     supabase = get_supabase()
-    slug = generate_slug(body.name)
+    base_slug = generate_slug(body.name)
+    slug = ensure_unique_slug(supabase, base_slug, exclude_project_id=project_id)
 
     supabase.table("projects").update({
         "name": body.name,
@@ -261,16 +309,35 @@ async def update_project(
     return SuccessResponse(message="Project updated")
 
 
-# ─── DELETE PROJECT ──────────────────────────────────────────────────────────
+# ─── DELETE PROJECT (HARD DELETE) ──────────────────────────────────────────────
 
 @router.delete("/{project_id}", response_model=SuccessResponse)
 async def delete_project(
     project_id: str,
     current_user: UserProfile = Depends(require_admin),
 ):
+    from app.config import get_settings
     supabase = get_supabase()
-    supabase.table("projects").update({"is_deleted": True}).eq("id", project_id).execute()
-    return SuccessResponse(message="Project deleted")
+    settings = get_settings()
+    bucket_name = settings.supabase_bucket_projects
+
+    # 1. Delete all images from Supabase Storage
+    # We list the folder containing the project images
+    try:
+        files = supabase.storage.from_(bucket_name).list(project_id)
+        if files:
+            files_to_remove = [f"{project_id}/{f['name']}" for f in files if f['name']]
+            if files_to_remove:
+                supabase.storage.from_(bucket_name).remove(files_to_remove)
+    except Exception:
+        pass # Ignore storage deletion errors if folder doesn't exist
+
+    # 2. Delete the project from the database.
+    # Assuming ON DELETE CASCADE is properly set for relations (comments, features, bugs, improvements, project_tags, project_images).
+    # If not, Supabase might throw a foreign key error, but the user confirmed cascading is set up.
+    supabase.table("projects").delete().eq("id", project_id).execute()
+    
+    return SuccessResponse(message="Project and all associated data permanently deleted")
 
 
 # ─── TOGGLE VISIBILITY ────────────────────────────────────────────────────────
@@ -314,16 +381,25 @@ async def upload_image(
     current_user: UserProfile = Depends(require_admin),
 ):
     import uuid
+    from app.config import get_settings
     supabase = get_supabase()
+    
+    # Check current image count limit (Max 5)
+    count_res = supabase.table("project_images").select("id", count="exact").eq("project_id", project_id).execute()
+    if (count_res.count or 0) >= 5:
+        raise HTTPException(status_code=400, detail="Maximum limit of 5 images per project reached.")
+
+    settings = get_settings()
+    bucket_name = settings.supabase_bucket_projects
     ext = file.filename.split(".")[-1] if "." in file.filename else "jpg"
     file_path = f"{project_id}/{uuid.uuid4()}.{ext}"
     content = await file.read()
 
-    upload_result = supabase.storage.from_("project-images").upload(file_path, content)
+    upload_result = supabase.storage.from_(bucket_name).upload(file_path, content)
     if upload_result.path is None:
         raise HTTPException(status_code=500, detail="Failed to upload image")
 
-    public_url = supabase.storage.from_("project-images").get_public_url(file_path)
+    public_url = supabase.storage.from_(bucket_name).get_public_url(file_path)
 
     images = supabase.table("project_images").select("display_order").eq("project_id", project_id).order("display_order", desc=True).limit(1).execute()
     next_order = (images.data[0]["display_order"] + 1) if images.data else 0
@@ -345,7 +421,28 @@ async def delete_image(
     image_id: str,
     current_user: UserProfile = Depends(require_admin),
 ):
+    from app.config import get_settings
     supabase = get_supabase()
+    settings = get_settings()
+    bucket_name = settings.supabase_bucket_projects
+
+    # Get image details to delete from bucket
+    img_res = supabase.table("project_images").select("image_url, project_id").eq("id", image_id).maybe_single().execute()
+    
+    if img_res.data:
+        image_url = img_res.data.get("image_url")
+        project_id = img_res.data.get("project_id")
+        if image_url and project_id:
+            try:
+                # Extract filename from URL (e.g. project_id/uuid.jpg)
+                url_parts = image_url.split(f"/{bucket_name}/")
+                if len(url_parts) == 2:
+                    file_path = url_parts[1]
+                    supabase.storage.from_(bucket_name).remove([file_path])
+            except Exception:
+                pass # Ignore storage removal errors
+
+    # Delete database record
     supabase.table("project_images").delete().eq("id", image_id).execute()
     return SuccessResponse(message="Image deleted")
 
@@ -359,10 +456,10 @@ async def create_tag(
 ):
     supabase = get_supabase()
     slug = generate_slug(body.name)
-    result = supabase.table("tags").insert({"name": body.name.strip(), "slug": slug}).select("id, name, slug").single().execute()
-    if not result.data:
+    result = supabase.table("tags").insert({"name": body.name.strip(), "slug": slug}).execute()
+    if not result.data or len(result.data) == 0:
         raise HTTPException(status_code=500, detail="Failed to create tag")
-    return TagOut(**result.data)
+    return TagOut(**result.data[0])
 
 # ─── GET ALL TAGS ────────────────────────────────────────────────────────────
 
@@ -371,3 +468,24 @@ async def get_tags():
     supabase = get_supabase()
     result = supabase.table("tags").select("*").order("name").execute()
     return getattr(result, 'data', [])
+
+# ─── DELETE TAG ──────────────────────────────────────────────────────────────
+
+@router.delete("/tags/{tag_id}", response_model=SuccessResponse)
+async def delete_tag(
+    tag_id: str,
+    current_user: UserProfile = Depends(require_admin),
+):
+    supabase = get_supabase()
+    
+    # Check if tag exists
+    existing = supabase.table("tags").select("id").eq("id", tag_id).maybe_single().execute()
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Tag not found")
+        
+    # Delete the tag (cascade will handle project_tags)
+    result = supabase.table("tags").delete().eq("id", tag_id).execute()
+    if not result.data:
+        raise HTTPException(status_code=500, detail="Failed to delete tag")
+        
+    return SuccessResponse(message="Tag deleted successfully")

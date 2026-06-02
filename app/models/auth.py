@@ -9,6 +9,8 @@ class SignupRequest(BaseModel):
     password: str
     confirm_password: str
     display_name: str
+    captcha_answer: str
+    captcha_token: str
 
     @field_validator("password")
     @classmethod
@@ -58,6 +60,8 @@ class ResendOTPRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+    captcha_answer: str
+    captcha_token: str
     stay_logged_in: bool = False
 
 
