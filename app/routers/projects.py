@@ -77,8 +77,12 @@ async def get_dashboard_projects():
     all_project_tags = supabase.table("project_tags").select("project_id, tags(id, name, slug)").in_("project_id", project_ids).execute()
     project_tags_data = getattr(all_project_tags, 'data', [])
     
+    all_images = supabase.table("project_images").select("*").in_("project_id", project_ids).order("display_order").execute()
+    images_data = getattr(all_images, 'data', [])
+    
     for p in projects_data:
         p["tags"] = [pt["tags"] for pt in project_tags_data if pt["project_id"] == p["id"] and pt.get("tags")]
+        p["images"] = [img for img in images_data if img["project_id"] == p["id"]]
         
     return {"projects": projects_data}
 
