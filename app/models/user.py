@@ -26,6 +26,7 @@ class UpdateRoleRequest(BaseModel):
 class UsersListResponse(BaseModel):
     users: List[UserOut]
     total: int
+    page: int
 
 
 class SuccessResponse(BaseModel):

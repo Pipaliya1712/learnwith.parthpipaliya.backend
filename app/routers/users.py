@@ -1,4 +1,5 @@
-from fastapi import APIRouter, HTTPException, Depends
+from typing import Optional
+from fastapi import APIRouter, HTTPException, Depends, Query
 from app.models.user import UpdateRoleRequest, SuccessResponse, UsersListResponse, UserOut
 from app.database import get_supabase
 from app.dependencies import require_admin, require_super_admin
@@ -8,11 +9,40 @@ router = APIRouter(prefix="/users", tags=["Users"])
 
 
 @router.get("", response_model=UsersListResponse)
-async def list_users(current_user: UserProfile = Depends(require_admin)):
+async def list_users(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(10, ge=1, le=100),
+    sort_by: str = Query("created_at"),
+    sort_desc: bool = Query(True),
+    user: Optional[str] = None,
+    role: Optional[str] = None,
+    status: Optional[str] = None,
+    current_user: UserProfile = Depends(require_admin),
+):
     supabase = get_supabase()
-    result = supabase.table("profiles").select("id, email, display_name, role, is_blocked, email_verified, created_at, updated_at").order("created_at", desc=True).execute()
+    query = supabase.table("profiles").select(
+        "id, email, display_name, role, is_blocked, email_verified, created_at, updated_at",
+        count="exact"
+    )
+
+    if user:
+        query = query.or_(f"email.ilike.%{user}%,display_name.ilike.%{user}%")
+    if role in {"admin", "developer"}:
+        query = query.eq("role", role)
+    if status == "blocked":
+        query = query.eq("is_blocked", True)
+    elif status == "active":
+        query = query.eq("is_blocked", False)
+
+    allowed_sort_columns = {"email", "display_name", "role", "created_at", "is_blocked"}
+    sort_col = sort_by if sort_by in allowed_sort_columns else "created_at"
+    result = query.order(sort_col, desc=sort_desc).range(skip, skip + limit - 1).execute()
     users = [UserOut(**u) for u in (result.data or [])]
-    return UsersListResponse(users=users, total=len(users))
+    return UsersListResponse(
+        users=users,
+        total=getattr(result, 'count', 0) or 0,
+        page=(skip // limit) + 1 if limit > 0 else 1
+    )
 
 
 @router.patch("/{user_id}/block", response_model=SuccessResponse)

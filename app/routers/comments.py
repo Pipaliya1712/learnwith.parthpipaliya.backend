@@ -78,6 +78,26 @@ async def add_comment(
     return SuccessResponse(message="Comment posted")
 
 # ─── UPDATE OWN COMMENT ──────────────────────────────────────────────────────
+# GET PROJECT COMMENTS
+@router.get("/project/{project_id}")
+async def get_project_comments(
+    project_id: str,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(5, ge=1, le=100),
+):
+    supabase = get_supabase()
+    comments = supabase.table("comments").select(
+        "id, project_id, content, created_at, updated_at, deleted_at, deleted_by, user_id, profiles!comments_user_id_fkey!inner(display_name, email, avatar_url, is_blocked)",
+        count="exact"
+    ).eq("project_id", project_id).is_("deleted_at", None).eq("profiles.is_blocked", False).order("created_at", desc=True).range(skip, skip + limit - 1).execute()
+
+    return {
+        "comments": getattr(comments, 'data', []),
+        "total": getattr(comments, 'count', 0) or 0,
+        "page": (skip // limit) + 1 if limit > 0 else 1
+    }
+
+
 @router.patch("/{comment_id}/own", response_model=SuccessResponse)
 async def update_own_comment(
     comment_id: str,

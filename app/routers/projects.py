@@ -1,5 +1,6 @@
 import re
-from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, status
+from typing import Optional
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, status, Query
 from app.models.project import (
     ProjectCreateRequest, ProjectUpdateRequest, ProjectOut,
     ToggleVisibilityRequest, ReorderRequest, TagCreateRequest,
@@ -65,13 +66,32 @@ async def get_landing_projects():
 # ─── GET DASHBOARD PROJECTS ──────────────────────────────────────────────────
 
 @router.get("/dashboard")
-async def get_dashboard_projects():
+async def get_dashboard_projects(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(12, ge=1, le=100),
+    search: Optional[str] = None,
+    tag_ids: Optional[str] = None,
+):
     supabase = get_supabase()
-    projects = supabase.table("projects").select("*").eq("is_deleted", False).order("created_at", desc=True).execute()
+    query = supabase.table("projects").select("*", count="exact").eq("is_deleted", False)
+
+    if search:
+        query = query.or_(f"name.ilike.%{search}%,summary.ilike.%{search}%")
+
+    if tag_ids:
+        tag_id_list = [tag_id.strip() for tag_id in tag_ids.split(",") if tag_id.strip()]
+        if tag_id_list:
+            matching_tags = supabase.table("project_tags").select("project_id").in_("tag_id", tag_id_list).execute()
+            matching_project_ids = list({pt["project_id"] for pt in getattr(matching_tags, 'data', [])})
+            if not matching_project_ids:
+                return {"projects": [], "total": 0, "page": (skip // limit) + 1}
+            query = query.in_("id", matching_project_ids)
+
+    projects = query.order("created_at", desc=True).range(skip, skip + limit - 1).execute()
     projects_data = getattr(projects, 'data', [])
     
     if not projects_data:
-        return {"projects": []}
+        return {"projects": [], "total": getattr(projects, 'count', 0) or 0, "page": (skip // limit) + 1}
         
     project_ids = [p["id"] for p in projects_data]
     all_project_tags = supabase.table("project_tags").select("project_id, tags(id, name, slug)").in_("project_id", project_ids).execute()
@@ -84,18 +104,43 @@ async def get_dashboard_projects():
         p["tags"] = [pt["tags"] for pt in project_tags_data if pt["project_id"] == p["id"] and pt.get("tags")]
         p["images"] = [img for img in images_data if img["project_id"] == p["id"]]
         
-    return {"projects": projects_data}
+    return {
+        "projects": projects_data,
+        "total": getattr(projects, 'count', 0) or 0,
+        "page": (skip // limit) + 1
+    }
 
 # ─── GET ADMIN PROJECTS ──────────────────────────────────────────────────────
 
 @router.get("/admin")
-async def get_admin_projects(current_user: UserProfile = Depends(require_admin)):
+async def get_admin_projects(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(10, ge=1, le=100),
+    sort_by: str = Query("created_at"),
+    sort_desc: bool = Query(True),
+    name: Optional[str] = None,
+    status: Optional[str] = None,
+    current_user: UserProfile = Depends(require_admin),
+):
     supabase = get_supabase()
-    projects = supabase.table("projects").select("*").order("created_at", desc=True).execute()
+    query = supabase.table("projects").select("*", count="exact")
+
+    if name:
+        query = query.or_(f"name.ilike.%{name}%,slug.ilike.%{name}%")
+    if status == "visible":
+        query = query.eq("is_visible", True)
+    elif status == "hidden":
+        query = query.eq("is_visible", False).eq("is_deleted", False)
+    elif status == "deleted":
+        query = query.eq("is_deleted", True)
+
+    allowed_sort_columns = {"name", "created_at", "updated_at", "is_visible"}
+    sort_col = sort_by if sort_by in allowed_sort_columns else "created_at"
+    projects = query.order(sort_col, desc=sort_desc).range(skip, skip + limit - 1).execute()
     projects_data = getattr(projects, 'data', [])
     
     if not projects_data:
-        return {"projects": []}
+        return {"projects": [], "total": getattr(projects, 'count', 0) or 0, "page": (skip // limit) + 1}
         
     project_ids = [p["id"] for p in projects_data]
     all_project_tags = supabase.table("project_tags").select("project_id, tags(id, name, slug)").in_("project_id", project_ids).execute()
@@ -104,7 +149,11 @@ async def get_admin_projects(current_user: UserProfile = Depends(require_admin))
     for p in projects_data:
         p["tags"] = [pt["tags"] for pt in project_tags_data if pt["project_id"] == p["id"] and pt.get("tags")]
         
-    return {"projects": projects_data}
+    return {
+        "projects": projects_data,
+        "total": getattr(projects, 'count', 0) or 0,
+        "page": (skip // limit) + 1
+    }
 
 # ─── GET PROJECT DETAILS ─────────────────────────────────────────────────────
 
@@ -135,8 +184,9 @@ async def get_project_by_slug(slug: str):
     ptags_data = getattr(ptags, 'data', [])
     project_data["tags"] = [pt["tags"] for pt in ptags_data if pt.get("tags")]
     
-    comments = supabase.table("comments").select("id, content, created_at, updated_at, user_id, profiles!comments_user_id_fkey(display_name, email, avatar_url, is_blocked)").eq("project_id", pid).is_("deleted_at", None).order("created_at", desc=True).execute()
+    comments = supabase.table("comments").select("id, project_id, content, created_at, updated_at, deleted_at, deleted_by, user_id, profiles!comments_user_id_fkey!inner(display_name, email, avatar_url, is_blocked)", count="exact").eq("project_id", pid).is_("deleted_at", None).eq("profiles.is_blocked", False).order("created_at", desc=True).range(0, 4).execute()
     project_data["comments"] = getattr(comments, 'data', [])
+    project_data["comments_total"] = getattr(comments, 'count', 0) or 0
     
     creator = supabase.table("profiles").select("display_name").eq("id", project_data["created_by"]).maybe_single().execute()
     creator_data = getattr(creator, 'data', None)
