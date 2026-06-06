@@ -1,11 +1,36 @@
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends, Query
-from app.models.user import UpdateRoleRequest, SuccessResponse, UsersListResponse, UserOut
+from app.models.user import UpdateRoleRequest, SuccessResponse, UsersListResponse, UserOut, PublicUserOut, PublicUsersSearchResponse
 from app.database import get_supabase
 from app.dependencies import require_admin, require_super_admin
 from app.models.auth import UserProfile
 
 router = APIRouter(prefix="/users", tags=["Users"])
+
+
+# ─── PUBLIC USER SEARCH ──────────────────────────────────────────────────────
+
+@router.get("/search", response_model=PublicUsersSearchResponse)
+async def search_users(
+    search: Optional[str] = None,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(12, ge=1, le=100),
+):
+    supabase = get_supabase()
+    query = supabase.table("profiles").select(
+        "id, display_name, avatar_url, role, created_at",
+        count="exact"
+    ).eq("is_blocked", False)
+
+    if search:
+        query = query.ilike("display_name", f"%{search}%")
+
+    result = query.order("display_name", desc=False).range(skip, skip + limit - 1).execute()
+    users = [PublicUserOut(**u) for u in (result.data or [])]
+    return PublicUsersSearchResponse(
+        users=users,
+        total=getattr(result, 'count', 0) or 0
+    )
 
 
 @router.get("", response_model=UsersListResponse)

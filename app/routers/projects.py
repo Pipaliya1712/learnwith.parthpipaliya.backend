@@ -69,6 +69,8 @@ async def get_landing_projects():
 async def get_dashboard_projects(
     skip: int = Query(0, ge=0),
     limit: int = Query(12, ge=1, le=100),
+    sort_by: str = Query("created_at"),
+    sort_desc: bool = Query(True),
     search: Optional[str] = None,
     tag_ids: Optional[str] = None,
 ):
@@ -87,7 +89,9 @@ async def get_dashboard_projects(
                 return {"projects": [], "total": 0, "page": (skip // limit) + 1}
             query = query.in_("id", matching_project_ids)
 
-    projects = query.order("created_at", desc=True).range(skip, skip + limit - 1).execute()
+    allowed_sort_columns = {"name", "created_at", "updated_at"}
+    sort_col = sort_by if sort_by in allowed_sort_columns else "created_at"
+    projects = query.order(sort_col, desc=sort_desc).range(skip, skip + limit - 1).execute()
     projects_data = getattr(projects, 'data', [])
     
     if not projects_data:

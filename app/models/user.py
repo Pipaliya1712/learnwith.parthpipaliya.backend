@@ -29,6 +29,19 @@ class UsersListResponse(BaseModel):
     page: int
 
 
+class PublicUserOut(BaseModel):
+    id: str
+    display_name: Optional[str] = None
+    avatar_url: Optional[str] = None
+    role: str
+    created_at: str
+
+
+class PublicUsersSearchResponse(BaseModel):
+    users: List[PublicUserOut]
+    total: int
+
+
 class SuccessResponse(BaseModel):
     success: bool = True
     message: str = "OK"
