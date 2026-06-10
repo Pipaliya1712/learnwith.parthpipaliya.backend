@@ -258,6 +258,25 @@ async def reset_password(body: ResetPasswordRequest):
 async def get_me(current_user: UserProfile = Depends(get_current_user)):
     return current_user
 
+@router.get("/me/progress")
+async def get_my_progress(current_user: UserProfile = Depends(get_current_user)):
+    from app.services.progress_service import get_user_progress
+    supabase = get_supabase()
+    progress = get_user_progress(supabase, current_user.id)
+    if not progress:
+        # Return default zeros if no progress exists yet
+        return {
+            "user_id": current_user.id,
+            "points": 0,
+            "level": "V1",
+            "solved_challenges": 0,
+            "approved_submissions": 0,
+            "rejected_submissions": 0,
+            "updated_at": "now()"
+        }
+    return progress
+
+
 
 # ─── UPDATE PROFILE ──────────────────────────────────────────────────────────
 

@@ -8,6 +8,30 @@ from app.models.auth import UserProfile
 router = APIRouter(prefix="/users", tags=["Users"])
 
 
+# ─── LEADERBOARD ─────────────────────────────────────────────────────────────
+
+@router.get("/leaderboard")
+async def get_leaderboard_endpoint(limit: int = Query(50, ge=1, le=100)):
+    from app.services.progress_service import get_leaderboard
+    supabase = get_supabase()
+    data = get_leaderboard(supabase, limit)
+    
+    # Map the response
+    leaderboard = []
+    for index, user in enumerate(data):
+        profile = user.pop("profiles", {}) or {}
+        leaderboard.append({
+            "rank": index + 1,
+            "user_id": user["user_id"],
+            "display_name": profile.get("display_name") or "Anonymous Learner",
+            "avatar_url": profile.get("avatar_url"),
+            "points": user["points"],
+            "level": user["level"],
+            "solved_challenges": user["solved_challenges"]
+        })
+        
+    return {"items": leaderboard}
+
 # ─── PUBLIC USER SEARCH ──────────────────────────────────────────────────────
 
 @router.get("/search", response_model=PublicUsersSearchResponse)

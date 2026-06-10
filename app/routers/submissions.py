@@ -132,7 +132,7 @@ async def review_submission(
     supabase = get_supabase()
     
     # Ensure it exists
-    existing = supabase.table("submissions").select("id, status, user_id, challenge_id").eq("id", submission_id).maybe_single().execute()
+    existing = supabase.table("submissions").select("id, status, user_id, challenge_id, challenges(points)").eq("id", submission_id).maybe_single().execute()
     if not getattr(existing, 'data', None):
         raise HTTPException(status_code=404, detail="Submission not found")
         
@@ -148,8 +148,10 @@ async def review_submission(
         
     supabase.table("submissions").update(update_data).eq("id", submission_id).execute()
     
-    # Optional Future Feature: If approved, award points via user_progress table
-    # if body.status == SubmissionStatus.APPROVED:
-    #     award_points(existing.data["user_id"], existing.data["challenge_id"])
+    # Award points if status is changing to approved (and wasn't already approved to prevent double-counting)
+    from app.services.progress_service import increment_user_progress
+    if body.status == SubmissionStatus.APPROVED and existing.data["status"] != SubmissionStatus.APPROVED.value:
+        points_to_add = existing.data["challenges"]["points"] if existing.data.get("challenges") else 0
+        increment_user_progress(supabase, existing.data["user_id"], points_to_add)
         
     return SuccessResponse(message=f"Submission updated to {body.status.value}")
