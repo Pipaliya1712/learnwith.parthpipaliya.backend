@@ -24,6 +24,11 @@ async def create_submission(
     # Check if the user already has a submission (or a draft) for this challenge
     existing = supabase.table("submissions").select("id, status").eq("challenge_id", body.challenge_id).eq("user_id", current_user.id).execute()
     
+    from app.services.ai_service import generate_mock_ai_review
+    
+    # Generate the AI review (simulated)
+    ai_review = generate_mock_ai_review(str(body.github_pr_url), body.challenge_id)
+    
     if existing.data:
         # If it's already approved, they shouldn't submit again
         if existing.data[0]["status"] == SubmissionStatus.APPROVED.value:
@@ -34,6 +39,8 @@ async def create_submission(
             "github_pr_url": str(body.github_pr_url),
             "github_repo_url": str(body.github_repo_url) if body.github_repo_url else None,
             "status": SubmissionStatus.SUBMITTED.value,
+            "ai_score": ai_review.score,
+            "ai_feedback": ai_review.feedback,
             "updated_at": "now()"
             # Note: body.notes is intentionally excluded to prevent DB errors
         }
@@ -46,7 +53,9 @@ async def create_submission(
         "user_id": current_user.id,
         "github_pr_url": str(body.github_pr_url),
         "github_repo_url": str(body.github_repo_url) if body.github_repo_url else None,
-        "status": SubmissionStatus.SUBMITTED.value
+        "status": SubmissionStatus.SUBMITTED.value,
+        "ai_score": ai_review.score,
+        "ai_feedback": ai_review.feedback
         # Note: body.notes is intentionally excluded to prevent DB errors
     }
     

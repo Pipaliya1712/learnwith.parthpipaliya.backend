@@ -200,7 +200,7 @@ async def get_my_challenges(
     # In a real app we query submissions for this user
     # Join with challenges and projects
     try:
-        result = supabase.table("submissions").select("id, status, updated_at, github_pr_url, challenges(id, title, slug, points, difficulty, projects(name))").eq("user_id", current_user.id).execute()
+        result = supabase.table("submissions").select("id, status, updated_at, github_pr_url, ai_score, ai_feedback, challenges(id, title, slug, points, difficulty, projects(name))").eq("user_id", current_user.id).execute()
         
         claims = getattr(result, 'data', [])
         formatted_claims = []
