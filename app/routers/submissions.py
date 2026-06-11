@@ -106,7 +106,7 @@ async def get_pending_reviews(
     supabase = get_supabase()
     
     # Query submissions that are submitted or under_review
-    result = supabase.table("submissions").select("*, profiles(username, avatar_url), challenges(title, points)", count="exact").in_("status", [SubmissionStatus.SUBMITTED.value, SubmissionStatus.UNDER_REVIEW.value]).order("created_at", desc=False).range(skip, skip + limit - 1).execute()
+    result = supabase.table("submissions").select("*, profiles(display_name, avatar_url), challenges(title, points)", count="exact").in_("status", [SubmissionStatus.SUBMITTED.value, SubmissionStatus.UNDER_REVIEW.value]).order("created_at", desc=False).range(skip, skip + limit - 1).execute()
     
     return {
         "items": getattr(result, 'data', []),
@@ -123,7 +123,7 @@ async def get_submission(
     current_user: UserProfile = Depends(require_admin), # In prod: verify user owns it or is admin
 ):
     supabase = get_supabase()
-    result = supabase.table("submissions").select("*, profiles(username, avatar_url), challenges(title, description, points, projects(name))").eq("id", submission_id).maybe_single().execute()
+    result = supabase.table("submissions").select("*, profiles(display_name, avatar_url), challenges(title, description, points, projects(name))").eq("id", submission_id).maybe_single().execute()
     
     if not getattr(result, 'data', None):
         raise HTTPException(status_code=404, detail="Submission not found")

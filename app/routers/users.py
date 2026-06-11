@@ -57,6 +57,19 @@ async def search_users(
     )
 
 
+@router.get("/platform-metrics")
+async def get_platform_metrics():
+    supabase = get_supabase()
+    challenges_res = supabase.table("challenges").select("id", count="exact").limit(1).execute()
+    users_res = supabase.table("profiles").select("id", count="exact").limit(1).execute()
+    submissions_res = supabase.table("submissions").select("id", count="exact").limit(1).execute()
+    
+    return {
+        "total_challenges": getattr(challenges_res, 'count', 0) or 0,
+        "total_users": getattr(users_res, 'count', 0) or 0,
+        "total_submissions": getattr(submissions_res, 'count', 0) or 0
+    }
+
 @router.get("", response_model=UsersListResponse)
 async def list_users(
     skip: int = Query(0, ge=0),
