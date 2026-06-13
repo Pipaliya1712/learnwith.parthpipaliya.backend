@@ -141,6 +141,7 @@ async def update_user_role(
 
 @router.get("/{user_id}/profile")
 async def get_user_profile(user_id: str):
+    from app.services.progress_service import get_user_progress, get_user_rank
     supabase = get_supabase()
     
     user_res = supabase.table("profiles").select("id, email, display_name, avatar_url, role, created_at").eq("id", user_id).maybe_single().execute()
@@ -153,9 +154,34 @@ async def get_user_profile(user_id: str):
     
     comments_res = supabase.table("comments").select("id, content, created_at, updated_at, projects(name, slug)").eq("user_id", user_id).is_("deleted_at", None).order("created_at", desc=True).execute()
     comments_data = getattr(comments_res, 'data', [])
+
+    # Fetch User Progress and Rank
+    progress = get_user_progress(supabase, user_id)
+    if not progress:
+        progress = {
+            "points": 0, "level": "V1", "solved_challenges": 0
+        }
+        progress["rank"] = 0
+    else:
+        progress["rank"] = get_user_rank(supabase, progress["points"])
+
+    # Fetch User Challenges
+    challenges_res = supabase.table("submissions").select("id, status, updated_at, created_at, github_pr_url, challenges(title, points, slug, difficulty, projects(name))").eq("user_id", user_id).in_("status", ["in_progress", "submitted", "approved"]).order("updated_at", desc=True).execute()
+    
+    # Format challenges
+    challenges_data = []
+    for sub in getattr(challenges_res, 'data', []):
+        if sub.get("challenges"):
+            ch = sub.pop("challenges")
+            if ch.get("projects"):
+                ch["project"] = ch.pop("projects")
+            sub["challenge"] = ch
+            challenges_data.append(sub)
     
     return {
         "user": user_data,
         "projects": projects_data,
-        "comments": comments_data
+        "comments": comments_data,
+        "progress": progress,
+        "challenges": challenges_data
     }

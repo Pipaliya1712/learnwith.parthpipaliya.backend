@@ -5,9 +5,8 @@ from app.models.submission import (
 )
 from app.models.project import SuccessResponse
 from app.database import get_supabase
-from app.dependencies import require_admin
+from app.dependencies import require_admin, get_current_user
 from app.models.auth import UserProfile
-# from app.dependencies import get_current_user # To be used when actual auth is wired
 
 router = APIRouter(prefix="/submissions", tags=["Submissions"])
 
@@ -16,9 +15,8 @@ router = APIRouter(prefix="/submissions", tags=["Submissions"])
 @router.post("", response_model=SuccessResponse, status_code=status.HTTP_201_CREATED)
 async def create_submission(
     body: SubmissionCreateRequest,
-    current_user: UserProfile = Depends(require_admin), # Allow admin for testing, change to get_current_user in production
+    current_user: UserProfile = Depends(get_current_user),
 ):
-    from app.dependencies import get_current_user
     supabase = get_supabase()
     
     # Check if the user already has a submission (or a draft) for this challenge
@@ -71,9 +69,8 @@ async def create_submission(
 async def get_my_submissions(
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
-    current_user: UserProfile = Depends(require_admin), # Normally get_current_user
+    current_user: UserProfile = Depends(get_current_user),
 ):
-    from app.dependencies import get_current_user
     supabase = get_supabase()
     
     # Query with challenge details
@@ -105,8 +102,8 @@ async def get_pending_reviews(
 ):
     supabase = get_supabase()
     
-    # Query submissions that are submitted or under_review
-    result = supabase.table("submissions").select("*, profiles(display_name, avatar_url), challenges(title, points)", count="exact").in_("status", [SubmissionStatus.SUBMITTED.value, SubmissionStatus.UNDER_REVIEW.value]).order("created_at", desc=False).range(skip, skip + limit - 1).execute()
+    # Query submissions that are submitted
+    result = supabase.table("submissions").select("*, profiles(display_name, avatar_url), challenges(title, points)", count="exact").eq("status", SubmissionStatus.SUBMITTED.value).order("created_at", desc=False).range(skip, skip + limit - 1).execute()
     
     return {
         "items": getattr(result, 'data', []),
@@ -120,7 +117,7 @@ async def get_pending_reviews(
 @router.get("/{submission_id}")
 async def get_submission(
     submission_id: str,
-    current_user: UserProfile = Depends(require_admin), # In prod: verify user owns it or is admin
+    current_user: UserProfile = Depends(get_current_user),
 ):
     supabase = get_supabase()
     result = supabase.table("submissions").select("*, profiles(display_name, avatar_url), challenges(title, description, points, projects(name))").eq("id", submission_id).maybe_single().execute()

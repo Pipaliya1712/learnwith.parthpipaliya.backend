@@ -25,6 +25,14 @@ def get_leaderboard(supabase, limit: int = 50):
         .execute()
     return getattr(response, 'data', [])
 
+def get_user_rank(supabase, points: int) -> int:
+    """Calculates user rank based on points."""
+    response = supabase.table('user_progress')\
+        .select('user_id', count='exact')\
+        .gt('points', points)\
+        .execute()
+    return (getattr(response, 'count', 0) or 0) + 1
+
 def increment_user_progress(supabase, user_id: str, points_to_add: int):
     """
     Awards points to a user and increments their solved challenge count.

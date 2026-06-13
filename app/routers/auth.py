@@ -176,6 +176,9 @@ async def login(body: LoginRequest):
     if not pwd_context.verify(body.password, profile["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
+    from app.dependencies import promote_role_if_super_admin
+    promote_role_if_super_admin(profile, settings)
+
     expire_hours = 24 if body.stay_logged_in else 1
     token = create_access_token(
         user_id=profile["id"],

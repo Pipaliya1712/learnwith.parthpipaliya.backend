@@ -4,9 +4,8 @@ from typing import Optional
 from datetime import datetime
 
 class SubmissionStatus(str, Enum):
-    DRAFT = "draft"
+    IN_PROGRESS = "in_progress"
     SUBMITTED = "submitted"
-    UNDER_REVIEW = "under_review"
     APPROVED = "approved"
     REJECTED = "rejected"
 

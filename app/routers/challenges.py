@@ -6,7 +6,7 @@ from app.models.challenge import (
 )
 from app.models.project import SuccessResponse
 from app.database import get_supabase
-from app.dependencies import require_admin
+from app.dependencies import require_admin, get_current_user
 from app.models.auth import UserProfile
 
 router = APIRouter(prefix="/challenges", tags=["Challenges"])
@@ -167,17 +167,16 @@ async def delete_challenge(
 @router.post("/{challenge_id}/claim", response_model=SuccessResponse)
 async def claim_challenge(
     challenge_id: str,
-    current_user: UserProfile = Depends(require_admin), # Allow admin for testing, but should be get_current_user in production
+    current_user: UserProfile = Depends(get_current_user),
 ):
-    from app.dependencies import get_current_user
     supabase = get_supabase()
     
-    # Use a mock "pending" PR URL to bypass the NOT NULL constraint for a draft claim
+    # Use standard in_progress status and NULL for github_pr_url
     insert_data = {
         "challenge_id": challenge_id,
         "user_id": current_user.id,
-        "github_pr_url": "pending",
-        "status": "submitted"
+        "status": "in_progress",
+        "github_pr_url": None
     }
     
     try:
@@ -192,9 +191,8 @@ async def claim_challenge(
 
 @router.get("/me/claimed")
 async def get_my_challenges(
-    current_user: UserProfile = Depends(require_admin), # Normally get_current_user
+    current_user: UserProfile = Depends(get_current_user),
 ):
-    from app.dependencies import get_current_user
     supabase = get_supabase()
     
     # In a real app we query submissions for this user
@@ -205,10 +203,7 @@ async def get_my_challenges(
         claims = getattr(result, 'data', [])
         formatted_claims = []
         for claim in claims:
-            # Map "pending" PRs to in_progress
-            if claim.get("github_pr_url") == "pending" and claim.get("status") == "submitted":
-                claim["status"] = "in_progress"
-                
+            # Removed pending_claim hack, status comes properly from DB
             ch = claim.pop("challenges", None)
             if ch:
                 proj = ch.pop("projects", None)

@@ -80,17 +80,28 @@ async def get_current_user(
             detail="Your account has been blocked. Contact support.",
         )
 
+    settings = get_settings()
+    promote_role_if_super_admin(profile, settings)
+
     return UserProfile(**profile)
 
 
-def is_super_admin(user: UserProfile, settings) -> bool:
-    super_emails = [e.strip().lower() for e in (settings.super_admin_email or "").split(",") if e.strip()]
-    return user.email.lower() in super_emails
+def promote_role_if_super_admin(profile: dict, settings) -> None:
+    """Promotes an admin to super_admin dynamically if their email is in the env config."""
+    print("profileprofile", profile)
+    if profile.get("role") == "admin":
+        super_emails = [e.strip().lower() for e in (settings.super_admin_email or "").split(",") if e.strip()]
+        print("super_emails", super_emails)
+        if profile.get("email", "").lower() in super_emails:
+            profile["role"] = "super_admin"
+
+
+def is_super_admin(user: UserProfile) -> bool:
+    return user.role == "super_admin"
 
 
 async def require_admin(current_user: UserProfile = Depends(get_current_user)) -> UserProfile:
-    settings = get_settings()
-    if current_user.role != "admin" and not is_super_admin(current_user, settings):
+    if current_user.role not in ["admin", "super_admin"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required",
@@ -99,8 +110,7 @@ async def require_admin(current_user: UserProfile = Depends(get_current_user)) -
 
 
 async def require_super_admin(current_user: UserProfile = Depends(get_current_user)) -> UserProfile:
-    settings = get_settings()
-    if not is_super_admin(current_user, settings):
+    if not is_super_admin(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Super admin access required",
